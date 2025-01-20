@@ -1,1 +1,21 @@
- 
+# 虚拟环境
+venv/
+env/
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+
+# 环境变量文件
+.env
+
+# 日志文件
+logs/
+*.log
+
+# IDE配置文件
+.vscode/
+.idea/
+
+# 数据文件
+data/journal_metrics/*.csv 
