@@ -20,7 +20,6 @@
 - Requests >= 2.25.0
 - python-dotenv >= 0.19.0
 - pandas >= 1.3.0
-- matplotlib >= 3.4.0
 - lxml >= 4.6.0
 
 ## 安装步骤
