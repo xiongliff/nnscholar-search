@@ -129,44 +129,6 @@ python app.py
 3. 错误处理
    - 系统会自动记录错误日志
    - 检查logs目录下的日志文件以排查问题
-
-## 开发说明
-
-1. 项目结构
-```
-.
-├── app.py              # 主应用文件
-├── templates/          # HTML模板
-│   ├── index.html     # 主页面模板
-│   └── results.html   # 结果页面模板
-├── static/            # 静态文件
-│   ├── css/          # CSS样式文件
-│   ├── js/           # JavaScript文件
-│   └── images/       # 图片资源
-├── utils/            # 工具函数
-│   ├── pubmed.py     # PubMed API相关函数
-│   ├── deepseek.py   # DeepSeek AI相关函数
-│   └── filters.py    # 文献筛选相关函数
-├── data/              # 数据文件
-│   ├── journal_if.csv # 期刊影响因子数据
-│   └── jcr_cas.csv   # JCR和中科院分区数据
-├── logs/              # 日志文件
-└── requirements.txt   # 依赖清单
-```
-
-2. 日志记录
-   - 使用Python的logging模块
-   - 日志文件按日期命名
-   - 包含INFO、WARNING和ERROR级别的日志
-
-## 贡献指南
-
-1. Fork项目
-2. 创建特性分支
-3. 提交更改
-4. 推送到分支
-5. 创建Pull Request
-
 ## 许可证
 
 本项目采用学术许可证（Academic License）。
