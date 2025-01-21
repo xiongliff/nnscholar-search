@@ -11,3 +11,6 @@ gunicorn==20.1.0
 # AI Integration
 openai>=1.12.0
 anthropic>=0.42.0
+
+# Data Visualization
+matplotlib>=3.7.1
