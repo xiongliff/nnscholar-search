@@ -401,7 +401,7 @@ def filter_papers_by_metrics(papers, filters):
         logger.info(f"4. CAS分区筛选 ({filters.get('cas_quartile', '无限制')}): {len(jcr_filtered)} -> {len(cas_filtered)}")
         
         # 5. 计算综合得分并排序
-        # 相关性权重为0.7，影响因子权重为0.3
+        # 相关性权重提高到0.8，影响因子权重降低到0.2
         for paper in cas_filtered:
             relevance = float(paper.get('relevance', 0))
             journal_info = paper.get('journal_info', {})
@@ -418,8 +418,8 @@ def filter_papers_by_metrics(papers, filters):
             except (ValueError, TypeError):
                 if_score = 0
             
-            # 计算综合得分
-            paper['composite_score'] = (relevance * 0.7) + (if_score * 0.3)
+            # 计算综合得分：相关度占80%，影响因子占20%
+            paper['composite_score'] = (relevance * 0.8) + (if_score * 0.2)
             logger.debug(f"文献 {paper.get('pmid')} 的综合得分: {paper['composite_score']:.1f} (相关性: {relevance:.1f}, IF得分: {if_score:.1f})")
         
         # 按综合得分排序
