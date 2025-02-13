@@ -26,6 +26,9 @@ import numpy as np
 from nltk.corpus import wordnet
 import codecs
 from journal_analyzer import JournalAnalyzer
+from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # 加载环境变量
 load_dotenv()
@@ -1345,6 +1348,99 @@ def export_papers_to_excel(papers, query, file_suffix=''):
         logger.error(f"导出Excel文件时发生错误: {str(e)}")
         return None
 
+def export_papers_to_word(papers, query, file_suffix=''):
+    """
+    将论文信息导出为Word文档
+    
+    Args:
+        papers (list): 论文信息列表
+        query (str): 搜索查询
+        file_suffix (str): 文件名后缀
+    
+    Returns:
+        str: 导出文件的路径
+    """
+    try:
+        # 创建Word文档
+        doc = Document()
+        
+        # 添加标题
+        title = doc.add_heading('文献检索报告', level=0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # 添加检索信息
+        doc.add_paragraph(f'检索词：{query}')
+        doc.add_paragraph(f'检索时间：{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        doc.add_paragraph(f'检索到的文献数量：{len(papers)}')
+        
+        # 添加文献列表
+        doc.add_heading('文献列表', level=1)
+        
+        for i, paper in enumerate(papers, 1):
+            # 添加文献标题
+            p = doc.add_paragraph()
+            p.add_run(f'{i}. ').bold = True
+            title_run = p.add_run(paper.get('title', 'N/A'))
+            title_run.bold = True
+            
+            # 添加作者和期刊信息
+            doc.add_paragraph(f'作者：{paper.get("authors", "N/A")}')
+            doc.add_paragraph(f'期刊：{paper.get("journal", "N/A")}')
+            doc.add_paragraph(f'发表时间：{paper.get("pub_date", "N/A")}')
+            
+            # 添加DOI和PMID
+            doc.add_paragraph(f'DOI：{paper.get("doi", "N/A")}')
+            doc.add_paragraph(f'PMID：{paper.get("pmid", "N/A")}')
+            
+            # 添加摘要
+            if paper.get('abstract'):
+                doc.add_paragraph('摘要：').bold = True
+                doc.add_paragraph(paper.get('abstract'))
+            
+            # 添加分隔线
+            if i < len(papers):
+                doc.add_paragraph('_' * 50)
+        
+        # 生成文件名
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'papers_{query}{file_suffix}_{timestamp}.docx'
+        filepath = os.path.join(EXPORTS_DIR, filename)
+        
+        # 保存文档
+        doc.save(filepath)
+        logger.info(f'成功导出Word文档：{filepath}')
+        
+        return filepath
+        
+    except Exception as e:
+        logger.error(f'导出Word文档失败：{str(e)}\n{traceback.format_exc()}')
+        return None
+
+def export_papers(papers, query, file_suffix=''):
+    """
+    将论文信息同时导出为Excel和Word格式
+    
+    Args:
+        papers (list): 论文信息列表
+        query (str): 搜索查询
+        file_suffix (str): 文件名后缀
+    
+    Returns:
+        tuple: (excel_path, word_path) 导出文件的路径
+    """
+    try:
+        # 导出Excel
+        excel_path = export_papers_to_excel(papers, query, file_suffix)
+        
+        # 导出Word
+        word_path = export_papers_to_word(papers, query, file_suffix)
+        
+        return excel_path, word_path
+        
+    except Exception as e:
+        logger.error(f'导出文件失败：{str(e)}\n{traceback.format_exc()}')
+        return None, None
+
 @app.route('/')
 def index():
     """主页"""
@@ -1432,46 +1528,45 @@ def search():
                     'message': '未找到相关文献'
                 })
             
-            # 导出初始搜索结果
-            initial_export_path = export_papers_to_excel(papers, query, 'initial')
-            
             # 应用筛选条件
+            filtered_papers = []
+            stats = {}
             if filters:
                 filtered_papers, stats = filter_papers_by_metrics(papers, filters)
                 logger.info(f"筛选结果: 原始文献数={len(papers)}, 筛选后文献数={len(filtered_papers)}")
-                papers = filtered_papers
-                filtered_count = len(filtered_papers)
-                
-                # 导出筛选后的结果
-                final_export_path = export_papers_to_excel(papers, query, 'filtered')
-                
-                # 获取期刊指标
-                for paper in papers:
-                    if 'journal' in paper and 'issn' in paper['journal']:
-                        metrics = get_journal_metrics(paper['journal']['issn'])
-                        if metrics:
-                            paper['journal'].update(metrics)
-                
-                # 限制返回数量
-                try:
-                    papers_limit = int(filters.get('papers_limit', 10))  # 确保转换为整数
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"无效的papers_limit值，使用默认值10。错误: {str(e)}")
-                    papers_limit = 10
-                papers = papers[:papers_limit]
-                
-                return jsonify({
-                    'success': True,
-                    'data': papers,
-                    'search_strategy': search_strategy,
-                    'total_count': total_count,
-                    'filtered_count': filtered_count,
-                    'message': f'找到 {filtered_count} 篇相关文献',
-                    'exports': {
-                        'initial': os.path.basename(initial_export_path) if initial_export_path else None,
-                        'filtered': os.path.basename(final_export_path) if 'final_export_path' in locals() else None
+
+            # 导出初始搜索结果
+            initial_excel, initial_word = export_papers(papers, query, '_initial')
+
+            # 如果有筛选结果，也导出筛选后的结果
+            if filtered_papers:
+                filtered_excel, filtered_word = export_papers(filtered_papers, query, '_filtered')
+            else:
+                filtered_excel, filtered_word = None, None
+
+            response = {
+                'success': True,
+                'data': filtered_papers if filtered_papers else papers,  # 如果有筛选结果就显示筛选结果，否则显示原始结果
+                'search_strategy': search_strategy,
+                'total_count': total_count,
+                'filtered_count': len(filtered_papers) if filtered_papers else len(papers),
+                'message': f'找到 {len(filtered_papers) if filtered_papers else len(papers)} 篇相关文献',
+                'stats': stats,  # 添加筛选统计信息
+                'all_papers': papers,  # 添加原始搜索结果
+                'filtered_papers': filtered_papers,  # 添加筛选后的结果
+                'export_files': {
+                    'initial': {
+                        'excel': os.path.basename(initial_excel) if initial_excel else None,
+                        'word': os.path.basename(initial_word) if initial_word else None
+                    },
+                    'filtered': {
+                        'excel': os.path.basename(filtered_excel) if filtered_excel else None,
+                        'word': os.path.basename(filtered_word) if filtered_word else None
                     }
-                })
+                }
+            }
+            
+            return jsonify(response)
             
         return jsonify({
             'success': False,
