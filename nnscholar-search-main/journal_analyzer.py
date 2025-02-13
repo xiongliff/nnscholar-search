@@ -27,10 +27,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 下载必要的NLTK数据
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('wordnet')
-nltk.download('averaged_perceptron_tagger')
+try:
+    logger.info("正在下载NLTK数据包...")
+    import nltk
+    nltk.download('punkt_tab')
+    nltk.download('punkt')
+    nltk.download('stopwords')
+    nltk.download('wordnet')
+    nltk.download('averaged_perceptron_tagger')
+    logger.info("NLTK数据包下载完成")
+except Exception as e:
+    logger.error(f"下载NLTK数据包时出错: {str(e)}")
+    # 如果下载失败，尝试使用替代方案
+    try:
+        from nltk.tokenize import word_tokenize
+        logger.info("使用基础分词功能作为替代方案")
+    except Exception as e2:
+        logger.error(f"无法初始化基础分词功能: {str(e2)}")
 
 class JournalAnalyzer:
     def __init__(self):
@@ -166,8 +179,14 @@ class JournalAnalyzer:
             for article in articles
         ])
         
-        # 分词和预处理
-        tokens = word_tokenize(all_text.lower())
+        try:
+            # 分词和预处理
+            tokens = word_tokenize(all_text.lower())
+        except Exception as e:
+            logger.error(f"分词失败，使用基础分词方法: {str(e)}")
+            # 使用基础分词方法作为后备方案
+            tokens = all_text.lower().split()
+            
         stop_words = set(stopwords.words('english'))
         lemmatizer = WordNetLemmatizer()
         
@@ -197,6 +216,49 @@ class JournalAnalyzer:
         
         return top_words
         
+    def analyze_hot_authors(self, articles, top_n=10):
+        """分析热点作者"""
+        try:
+            # 统计作者出现次数
+            author_freq = Counter()
+            
+            # 遍历所有文章
+            for article in articles:
+                # 获取作者列表
+                authors = article.get('authors', [])
+                # 更新作者频率
+                author_freq.update(authors)
+            
+            # 获取出现次数最多的作者
+            top_authors = author_freq.most_common(top_n)
+            
+            # 转换为更详细的格式
+            author_stats = []
+            for author, count in top_authors:
+                # 查找该作者的所有文章
+                author_articles = [
+                    article for article in articles
+                    if author in article.get('authors', [])
+                ]
+                
+                # 计算作者的第一作者和通讯作者次数
+                first_author_count = sum(1 for article in author_articles if article['authors'] and article['authors'][0] == author)
+                corresponding_author_count = sum(1 for article in author_articles if article['authors'] and article['authors'][-1] == author)
+                
+                author_stats.append({
+                    'name': author,
+                    'total_papers': count,
+                    'first_author': first_author_count,
+                    'corresponding_author': corresponding_author_count,
+                    'years': sorted(set(article['year'] for article in author_articles if article.get('year')))
+                })
+            
+            return author_stats
+            
+        except Exception as e:
+            logger.error(f"分析热点作者时出错: {str(e)}")
+            return []
+            
     def generate_heatmap(self, top_words, filename):
         """生成热点方向热图"""
         # 准备数据
@@ -254,6 +316,9 @@ def main():
         
     # 分析热点方向
     hot_topics = analyzer.analyze_hot_topics(all_articles)
+    
+    # 分析热点作者
+    hot_authors = analyzer.analyze_hot_authors(all_articles)
     
     # 生成热图
     analyzer.generate_heatmap(

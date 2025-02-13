@@ -6,6 +6,7 @@
     <title>NNScholar - 医学文献智能检索与分析系统</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
         :root {
             --primary-color: #4169E1;
@@ -290,137 +291,291 @@
         .toast.error { background-color: #dc3545; }
         .toast.warning { background-color: #ffc107; color: #000; }
         .toast.info { background-color: #17a2b8; }
+
+        .mode-container {
+            transition: all 0.3s ease-in-out;
+        }
+        
+        .analysis-chart {
+            min-height: 300px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .btn-check:checked + .btn-outline-light {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+
+        /* 添加热点作者表格样式 */
+        .table-responsive {
+            margin-top: 1rem;
+        }
+        
+        .table {
+            font-size: 0.9rem;
+        }
+        
+        .table th {
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: 500;
+        }
+        
+        .table td {
+            vertical-align: middle;
+        }
+        
+        .author-rank {
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+        
+        .author-years {
+            font-size: 0.8rem;
+            color: var(--secondary-color);
+        }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark fixed-top">
-    <div class="container">
+        <div class="container">
             <a class="navbar-brand" href="#">
                 <i class="fas fa-book-medical me-2"></i>
                 NNScholar
             </a>
+            <!-- 添加模式切换按钮 -->
+            <div class="ms-auto">
+                <div class="btn-group" role="group">
+                    <input type="radio" class="btn-check" name="search-mode" id="mode-normal" value="normal" checked>
+                    <label class="btn btn-outline-light" for="mode-normal">
+                        <i class="fas fa-search me-1"></i>文献检索
+                    </label>
+                    
+                    <input type="radio" class="btn-check" name="search-mode" id="mode-analysis" value="analysis">
+                    <label class="btn btn-outline-light" for="mode-analysis">
+                        <i class="fas fa-chart-line me-1"></i>热点分析
+                    </label>
+                </div>
+            </div>
         </div>
     </nav>
 
     <div class="container">
         <div class="toast-container"></div>
 
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">
-                    <i class="fas fa-search me-2"></i>
-                    文献检索
-                </h5>
-                <div class="search-container">
-                    <div class="search-form">
-                        <input type="text" id="search-input" placeholder="请输入搜索关键词...">
-                        <button id="search-btn">生成检索策略</button>
-                    </div>
+        <!-- 文献检索模式 -->
+        <div id="normal-mode-container" class="mode-container">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="fas fa-search me-2"></i>
+                        文献检索
+                    </h5>
+                    <div class="search-container">
+                        <div class="search-form">
+                            <input type="text" id="search-input" placeholder="请输入搜索关键词...">
+                            <button id="search-btn">生成检索策略</button>
+                        </div>
 
-                    <!-- 添加检索策略显示和编辑区域 -->
-                    <div id="search-strategy-container" style="display: none;" class="mt-4">
+                        <!-- 添加检索策略显示和编辑区域 -->
+                        <div id="search-strategy-container" style="display: none;" class="mt-4">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">检索策略</h5>
+                                    <div class="form-group">
+                                        <textarea id="search-strategy" class="form-control" rows="6"></textarea>
+                                    </div>
+                                    <div class="d-flex justify-content-between mt-3">
+                                        <button id="modify-strategy-btn" class="btn btn-secondary">修改检索策略</button>
+                                        <button id="execute-search-btn" class="btn btn-primary">开始检索</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 添加检索结果统计信息 -->
+                        <div id="search-stats" style="display: none;" class="mt-4">
+                            <div class="alert alert-info">
+                                <span>检索到相关文献共 <strong id="total-count">0</strong> 篇</span>
+                                <br>
+                                <span>符合筛选条件的文献共 <strong id="filtered-count">0</strong> 篇</span>
+                            </div>
+                        </div>
+
+                        <!-- 添加筛选条件区域 -->
+                        <div class="filters-section mt-4">
+                            <div class="filter-group">
+                                <h6 class="filter-title">发表年份</h6>
+                                <div class="d-flex gap-2">
+                                    <input type="number" id="year-start" class="form-control form-control-sm" placeholder="起始年份">
+                                    <span class="align-self-center">-</span>
+                                    <input type="number" id="year-end" class="form-control form-control-sm" placeholder="结束年份">
+                                </div>
+                            </div>
+
+                            <div class="filter-group">
+                                <h6 class="filter-title">影响因子</h6>
+                                <input type="number" id="min-if" class="form-control form-control-sm" placeholder="最低影响因子" step="0.1">
+                            </div>
+
+                            <div class="filter-group">
+                                <h6 class="filter-title">JCR分区</h6>
+                                <div class="checkbox-group">
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="jcr" value="Q1"> Q1
+                                    </label>
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="jcr" value="Q2"> Q2
+                                    </label>
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="jcr" value="Q3"> Q3
+                                    </label>
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="jcr" value="Q4"> Q4
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="filter-group">
+                                <h6 class="filter-title">中科院分区</h6>
+                                <div class="checkbox-group">
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="cas" value="1"> 1区
+                                    </label>
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="cas" value="2"> 2区
+                                    </label>
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="cas" value="3"> 3区
+                                    </label>
+                                    <label class="custom-checkbox">
+                                        <input type="checkbox" name="cas" value="4"> 4区
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="filter-group">
+                                <h6 class="filter-title">显示数量</h6>
+                                <select id="papers-limit" class="form-select form-select-sm">
+                                    <option value="10">10篇</option>
+                                    <option value="20">20篇</option>
+                                    <option value="50">50篇</option>
+                                    <option value="100">100篇</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 热点分析模式 -->
+        <div id="analysis-mode-container" class="mode-container" style="display: none;">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="fas fa-chart-line me-2"></i>
+                        期刊热点分析
+                    </h5>
+                    
+                    <!-- 期刊选择 -->
+                    <div class="form-group mb-3">
+                        <label class="form-label">期刊名称</label>
+                        <input type="text" class="form-control" id="journal-input" placeholder="请输入期刊名称（例如：Radiology）">
+                        <div class="form-text text-muted">请输入完整的期刊名称，支持任意PubMed收录的期刊</div>
+                    </div>
+                    
+                    <!-- 关键词方向（可选） -->
+                    <div class="form-group mb-3">
+                        <label class="form-label">关键词方向（可选）</label>
+                        <input type="text" class="form-control" id="keywords-input" placeholder="输入感兴趣的研究方向关键词，多个关键词请用逗号分隔">
+                        <div class="form-text text-muted">如果不填写，将分析所有研究方向</div>
+                    </div>
+                    
+                    <!-- 时间范围选择 -->
+                    <div class="form-group mb-3">
+                        <label class="form-label">分析时间范围</label>
+                        <div class="d-flex gap-2">
+                            <input type="number" class="form-control" id="analysis-year-start" placeholder="起始年份">
+                            <span class="align-self-center">-</span>
+                            <input type="number" class="form-control" id="analysis-year-end" placeholder="结束年份">
+                        </div>
+                    </div>
+                    
+                    <!-- 分析按钮 -->
+                    <button class="btn btn-primary" id="analyze-btn">
+                        <i class="fas fa-chart-bar me-1"></i>
+                        开始分析
+                    </button>
+                    
+                    <!-- 分析结果展示区域 -->
+                    <div id="analysis-results" class="mt-4" style="display: none;">
+                        <!-- 热点主题热力图 -->
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h6 class="card-title">研究热点分布</h6>
+                                <div id="heatmap-container" class="analysis-chart"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 热点词云 -->
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h6 class="card-title">热点词云</h6>
+                                <div id="wordcloud-container" class="analysis-chart"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 趋势图 -->
                         <div class="card">
                             <div class="card-body">
-                                <h5 class="card-title">检索策略</h5>
-                    <div class="form-group">
-                                    <textarea id="search-strategy" class="form-control" rows="6"></textarea>
+                                <h6 class="card-title">研究趋势变化</h6>
+                                <div id="trend-container" class="analysis-chart"></div>
+                            </div>
+                        </div>
+
+                        <!-- 热点作者 -->
+                        <div class="card mt-4">
+                            <div class="card-body">
+                                <h6 class="card-title">热点作者排名</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>排名</th>
+                                                <th>作者</th>
+                                                <th>发文总数</th>
+                                                <th>第一作者</th>
+                                                <th>通讯作者</th>
+                                                <th>发文年份</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="hot-authors-table">
+                                        </tbody>
+                                    </table>
                                 </div>
-                                <div class="d-flex justify-content-between mt-3">
-                                    <button id="modify-strategy-btn" class="btn btn-secondary">修改检索策略</button>
-                                    <button id="execute-search-btn" class="btn btn-primary">开始检索</button>
-                                </div>
                             </div>
                         </div>
-                    </div>
-
-                    <!-- 添加检索结果统计信息 -->
-                    <div id="search-stats" style="display: none;" class="mt-4">
-                        <div class="alert alert-info">
-                            <span>检索到相关文献共 <strong id="total-count">0</strong> 篇</span>
-                            <br>
-                            <span>符合筛选条件的文献共 <strong id="filtered-count">0</strong> 篇</span>
-                </div>
-                    </div>
-
-                    <!-- 添加筛选条件区域 -->
-                    <div class="filters-section mt-4">
-                        <div class="filter-group">
-                            <h6 class="filter-title">发表年份</h6>
-                            <div class="d-flex gap-2">
-                                <input type="number" id="year-start" class="form-control form-control-sm" placeholder="起始年份">
-                                <span class="align-self-center">-</span>
-                                <input type="number" id="year-end" class="form-control form-control-sm" placeholder="结束年份">
-                            </div>
-                        </div>
-
-                        <div class="filter-group">
-                            <h6 class="filter-title">影响因子</h6>
-                            <input type="number" id="min-if" class="form-control form-control-sm" placeholder="最低影响因子" step="0.1">
-                        </div>
-
-                        <div class="filter-group">
-                            <h6 class="filter-title">JCR分区</h6>
-                            <div class="checkbox-group">
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="jcr" value="Q1"> Q1
-                                </label>
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="jcr" value="Q2"> Q2
-                                </label>
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="jcr" value="Q3"> Q3
-                                </label>
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="jcr" value="Q4"> Q4
-                                </label>
-                            </div>
-                        </div>
-
-                        <div class="filter-group">
-                            <h6 class="filter-title">中科院分区</h6>
-                            <div class="checkbox-group">
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="cas" value="1"> 1区
-                                </label>
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="cas" value="2"> 2区
-                                </label>
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="cas" value="3"> 3区
-                                </label>
-                                <label class="custom-checkbox">
-                                    <input type="checkbox" name="cas" value="4"> 4区
-                                </label>
-                            </div>
-                        </div>
-
-                        <div class="filter-group">
-                            <h6 class="filter-title">显示数量</h6>
-                            <select id="papers-limit" class="form-select form-select-sm">
-                                <option value="10">10篇</option>
-                                <option value="20">20篇</option>
-                                <option value="50">50篇</option>
-                                <option value="100">100篇</option>
-                            </select>
-                </div>
                     </div>
                 </div>
             </div>
         </div>
-        
-        <div id="loading" class="loading">
-            <div class="loading-spinner"></div>
-            <p class="mt-3">正在检索中，请稍候...</p>
-        </div>
-        
-        <div id="results" class="card" style="display: none;">
-            <div class="card-body">
-                <h5 class="card-title">
-                    <i class="fas fa-list-ul me-2"></i>
-                    检索结果
-                </h5>
-                <div id="resultsList"></div>
-            </div>
+    </div>
+
+    <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <p class="mt-3">正在检索中，请稍候...</p>
+    </div>
+    
+    <div id="results" class="card" style="display: none;">
+        <div class="card-body">
+            <h5 class="card-title">
+                <i class="fas fa-list-ul me-2"></i>
+                检索结果
+            </h5>
+            <div id="resultsList"></div>
         </div>
     </div>
 
@@ -690,7 +845,285 @@
             }
             return response.json();
         }
+
+        // 模式切换处理
+        document.querySelectorAll('input[name="search-mode"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const normalMode = document.getElementById('normal-mode-container');
+                const analysisMode = document.getElementById('analysis-mode-container');
+                
+                if (this.value === 'normal') {
+                    normalMode.style.display = 'block';
+                    analysisMode.style.display = 'none';
+                } else {
+                    normalMode.style.display = 'none';
+                    analysisMode.style.display = 'block';
+                }
+            });
+        });
+
+        // 热点分析功能
+        document.getElementById('analyze-btn').addEventListener('click', function() {
+            const journal = document.getElementById('journal-input').value.trim();
+            const keywords = document.getElementById('keywords-input').value.trim();
+            const startYear = document.getElementById('analysis-year-start').value;
+            const endYear = document.getElementById('analysis-year-end').value;
+            
+            if (!journal || !startYear || !endYear) {
+                showToast('请至少填写期刊名称和时间范围', 'warning');
+                return;
+            }
+            
+            // 显示加载状态
+            showLoading('正在分析期刊数据...');
+            
+            // 调用后端API
+            fetch('/api/analyze-journal', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    journal: journal,
+                    keywords: keywords,
+                    start_year: startYear,
+                    end_year: endYear
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.success) {
+                    displayAnalysisResults(data);
+                    showToast('期刊分析完成', 'success');
+                } else {
+                    showToast(data.error || '分析失败', 'error');
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                showToast('分析过程中发生错误: ' + error.message, 'error');
+            });
+        });
+
+        // 在分析结果处理函数中添加热点作者表格的渲染
+        function displayAnalysisResults(data) {
+            document.getElementById('analysis-results').style.display = 'block';
+            
+            // 渲染热图、词云和趋势图的代码保持不变
+            drawHeatmap(data.heatmap_data);
+            drawWordCloud(data.wordcloud_data);
+            drawTrendChart(data.trend_data);
+            
+            // 渲染热点作者表格
+            const authorsTable = document.getElementById('hot-authors-table');
+            authorsTable.innerHTML = data.hot_authors.map((author, index) => `
+                <tr>
+                    <td class="author-rank">${index + 1}</td>
+                    <td>${author.name}</td>
+                    <td>${author.total_papers}</td>
+                    <td>${author.first_author}</td>
+                    <td>${author.corresponding_author}</td>
+                    <td class="author-years">${author.years.join(', ')}</td>
+                </tr>
+            `).join('');
+        }
+
+        // 绘制热力图
+        function drawHeatmap(data) {
+            const container = document.getElementById('heatmap-container');
+            const chart = echarts.init(container);
+            
+            // 准备数据
+            const size = Math.ceil(Math.sqrt(data.length));
+            const matrix = new Array(size).fill(0).map(() => new Array(size).fill(0));
+            const labels = new Array(size).fill(0).map(() => new Array(size).fill(''));
+            
+            data.forEach((item, index) => {
+                const row = Math.floor(index / size);
+                const col = index % size;
+                if (row < size && col < size) {
+                    matrix[row][col] = item[1];  // 频率
+                    labels[row][col] = item[0];  // 词语
+                }
+            });
+            
+            // 配置项
+            const option = {
+                tooltip: {
+                    position: 'top',
+                    formatter: function(params) {
+                        const word = labels[params.data[0]][params.data[1]];
+                        const value = matrix[params.data[0]][params.data[1]];
+                        return `${word}: ${value}次`;
+                    }
+                },
+                animation: true,
+                grid: {
+                    top: '10%',
+                    left: '10%',
+                    right: '10%',
+                    bottom: '15%'
+                },
+                xAxis: {
+                    type: 'category',
+                    data: new Array(size).fill(0).map((_, i) => i),
+                    splitArea: {
+                        show: true
+                    },
+                    axisLabel: {show: false}
+                },
+                yAxis: {
+                    type: 'category',
+                    data: new Array(size).fill(0).map((_, i) => i),
+                    splitArea: {
+                        show: true
+                    },
+                    axisLabel: {show: false}
+                },
+                visualMap: {
+                    min: 0,
+                    max: Math.max(...matrix.flat()),
+                    calculable: true,
+                    orient: 'horizontal',
+                    left: 'center',
+                    bottom: '5%',
+                    inRange: {
+                        color: ['#e9ecef', '#4169E1']
+                    }
+                },
+                series: [{
+                    name: '热点分布',
+                    type: 'heatmap',
+                    data: matrix.map((row, i) => 
+                        row.map((val, j) => [i, j, val])
+                    ).flat(),
+                    label: {
+                        show: true,
+                        formatter: function(params) {
+                            return labels[params.data[0]][params.data[1]];
+                        },
+                        fontSize: 8
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            shadowBlur: 10,
+                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                        }
+                    }
+                }]
+            };
+            
+            chart.setOption(option);
+            window.addEventListener('resize', () => chart.resize());
+        }
+
+        // 绘制词云
+        function drawWordCloud(data) {
+            const container = document.getElementById('wordcloud-container');
+            const chart = echarts.init(container);
+            
+            const option = {
+                tooltip: {
+                    show: true,
+                    formatter: function(params) {
+                        return `${params.data.name}: ${params.data.value}次`;
+                    }
+                },
+                series: [{
+                    type: 'wordCloud',
+                    shape: 'circle',
+                    left: 'center',
+                    top: 'center',
+                    width: '90%',
+                    height: '90%',
+                    right: null,
+                    bottom: null,
+                    sizeRange: [12, 60],
+                    rotationRange: [-45, 45],
+                    rotationStep: 45,
+                    gridSize: 8,
+                    drawOutOfBound: false,
+                    textStyle: {
+                        fontFamily: 'sans-serif',
+                        fontWeight: 'bold',
+                        color: function() {
+                            return 'rgb(' + [
+                                Math.round(Math.random() * 160),
+                                Math.round(Math.random() * 160),
+                                Math.round(Math.random() * 160)
+                            ].join(',') + ')';
+                        }
+                    },
+                    emphasis: {
+                        textStyle: {
+                            shadowBlur: 10,
+                            shadowColor: '#333'
+                        }
+                    },
+                    data: data.map(([name, value]) => ({
+                        name,
+                        value,
+                        textStyle: {
+                            color: '#4169E1'
+                        }
+                    }))
+                }]
+            };
+            
+            chart.setOption(option);
+            window.addEventListener('resize', () => chart.resize());
+        }
+
+        // 绘制趋势图
+        function drawTrendChart(data) {
+            const container = document.getElementById('trend-container');
+            const chart = echarts.init(container);
+            
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'shadow'
+                    }
+                },
+                legend: {
+                    data: data.topics,
+                    top: '5%'
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    data: data.years,
+                    axisLabel: {
+                        rotate: 45
+                    }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '出现频率'
+                },
+                series: data.topics.map((topic, index) => ({
+                    name: topic,
+                    type: 'line',
+                    data: data.frequencies[index],
+                    smooth: true,
+                    symbol: 'circle',
+                    symbolSize: 8,
+                    lineStyle: {
+                        width: 3
+                    }
+                }))
+            };
+            
+            chart.setOption(option);
+            window.addEventListener('resize', () => chart.resize());
+        }
     </script>
 </body>
-</html> 
 </html> 

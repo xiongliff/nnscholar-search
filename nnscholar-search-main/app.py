@@ -25,6 +25,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
 from nltk.corpus import wordnet
 import codecs
+from journal_analyzer import JournalAnalyzer
 
 # 加载环境变量
 load_dotenv()
@@ -1528,6 +1529,95 @@ def get_trend(issn):
         return jsonify({
             'success': False,
             'error': f'获取影响因子趋势出错: {str(e)}'
+        }), 500
+
+@app.route('/api/analyze-journal', methods=['POST'])
+def analyze_journal():
+    """期刊分析API端点"""
+    try:
+        data = request.get_json()
+        journal = data.get('journal')
+        keywords = data.get('keywords', '').strip()  # 可选参数
+        start_year = data.get('start_year')
+        end_year = data.get('end_year')
+        
+        if not all([journal, start_year, end_year]):
+            return jsonify({
+                'success': False,
+                'error': '缺少必要的参数'
+            }), 400
+            
+        logger.info(f"开始分析期刊: {journal}, 时间范围: {start_year}-{end_year}")
+        if keywords:
+            logger.info(f"关键词方向: {keywords}")
+        
+        # 创建分析器实例
+        analyzer = JournalAnalyzer()
+        
+        # 获取文章数据
+        articles = analyzer.fetch_journal_articles(journal, start_year, end_year)
+        
+        if not articles:
+            return jsonify({
+                'success': False,
+                'error': '未找到相关文章'
+            }), 404
+            
+        logger.info(f"获取到 {len(articles)} 篇文章")
+        
+        # 如果提供了关键词，进行过滤
+        if keywords:
+            keywords_list = [k.strip().lower() for k in keywords.split(',')]
+            filtered_articles = []
+            for article in articles:
+                # 检查标题和摘要是否包含任何关键词
+                text = (article.get('title', '') + ' ' + article.get('abstract', '')).lower()
+                if any(keyword in text for keyword in keywords_list):
+                    filtered_articles.append(article)
+            articles = filtered_articles
+            logger.info(f"关键词过滤后剩余 {len(articles)} 篇文章")
+            
+            if not articles:
+                return jsonify({
+                    'success': False,
+                    'error': '未找到包含指定关键词的文章'
+                }), 404
+        
+        # 分析热点主题
+        hot_topics = analyzer.analyze_hot_topics(articles)
+        
+        # 分析热点作者
+        hot_authors = analyzer.analyze_hot_authors(articles)
+        
+        # 生成热力图
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        heatmap_file = os.path.join('static', 'images', f'heatmap_{journal}_{timestamp}.png')
+        os.makedirs(os.path.dirname(heatmap_file), exist_ok=True)
+        analyzer.generate_heatmap(hot_topics, heatmap_file)
+        
+        # 准备返回数据
+        response_data = {
+            'success': True,
+            'heatmap_data': hot_topics,
+            'wordcloud_data': hot_topics,
+            'trend_data': {
+                'years': list(range(int(start_year), int(end_year) + 1)),
+                'topics': [topic[0] for topic in hot_topics[:5]],  # 取前5个热点主题
+                'frequencies': [topic[1] for topic in hot_topics[:5]]
+            },
+            'hot_authors': hot_authors,  # 添加热点作者数据
+            'heatmap_url': f'/{heatmap_file}',
+            'total_articles': len(articles)
+        }
+        
+        logger.info("期刊分析完成")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"期刊分析失败: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': f'分析失败: {str(e)}'
         }), 500
 
 if __name__ == '__main__':
