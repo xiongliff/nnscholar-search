@@ -336,6 +336,60 @@
             font-size: 0.8rem;
             color: var(--secondary-color);
         }
+
+        /* 添加搜索模式切换样式 */
+        .search-mode-toggle {
+            margin-bottom: 1rem;
+        }
+        
+        .search-mode-toggle .btn-group {
+            width: 100%;
+            margin-bottom: 0.5rem;
+        }
+        
+        .search-mode-toggle .btn {
+            flex: 1;
+            text-align: center;
+        }
+        
+        /* 调整输入框样式 */
+        #search-input {
+            min-height: 60px;
+            resize: vertical;
+            transition: min-height 0.3s ease;
+        }
+        
+        #search-input.paragraph-mode {
+            min-height: 120px;
+        }
+        
+        /* 段落模式的结果样式 */
+        .sentence-result {
+            border-left: 4px solid var(--primary-color);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .sentence-text {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            color: #2c3e50;
+        }
+        
+        .papers-list {
+            margin-top: 1rem;
+        }
+        
+        .paper-item {
+            padding: 0.75rem;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .paper-item:last-child {
+            border-bottom: none;
+        }
     </style>
 </head>
 <body>
@@ -374,8 +428,34 @@
                         文献检索
                     </h5>
                     <div class="search-container">
+                        <!-- 添加搜索模式切换 -->
+                        <div class="search-mode-toggle mb-3">
+                            <div class="btn-group" role="group">
+                                <input type="radio" class="btn-check" name="input-mode" id="mode-single" value="single" checked>
+                                <label class="btn btn-outline-primary" for="mode-single">
+                                    <i class="fas fa-search me-1"></i>单句模式
+                                </label>
+                                
+                                <input type="radio" class="btn-check" name="input-mode" id="mode-paragraph" value="paragraph">
+                                <label class="btn btn-outline-primary" for="mode-paragraph">
+                                    <i class="fas fa-paragraph me-1"></i>段落模式
+                                </label>
+                            </div>
+                            <div class="d-flex align-items-center mt-2">
+                                <small class="form-text text-muted me-3">段落模式：可一次性输入多个句子，系统将分别分析每句话的相关文献</small>
+                                <div id="paragraph-options" style="display: none;">
+                                    <select class="form-select form-select-sm" id="papers-per-sentence">
+                                        <option value="5">每句显示5篇</option>
+                                        <option value="10">每句显示10篇</option>
+                                        <option value="20">每句显示20篇</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="search-form">
-                            <input type="text" id="search-input" placeholder="请输入搜索关键词...">
+                            <textarea id="search-input" class="form-control" rows="3" 
+                                    placeholder="请输入搜索关键词..."></textarea>
                             <button id="search-btn">生成检索策略</button>
                         </div>
 
@@ -677,23 +757,30 @@
 
         document.getElementById('search-btn').addEventListener('click', function() {
             const query = document.getElementById('search-input').value.trim();
+            const mode = document.querySelector('input[name="input-mode"]:checked').value;
+            const papersPerSentence = mode === 'paragraph' ? 
+                parseInt(document.getElementById('papers-per-sentence').value) : 10;
+            const yearStart = document.getElementById('year-start').value;
+            const yearEnd = document.getElementById('year-end').value;
+            
             if (!query) {
-                showToast('请输入搜索关键词', 'warning');
+                showToast('请输入搜索内容', 'warning');
                 return;
             }
 
             // 显示加载状态
-            showLoading('正在生成检索策略...');
+            showLoading(mode === 'paragraph' ? '正在分析段落...' : '正在生成检索策略...');
 
             // 构建请求数据对象
             const requestData = {
                 query: query,
+                mode: mode,
+                papers_per_sentence: papersPerSentence,
                 generate_only: true,
                 execute_search: false,
-                filters: {}
+                year_start: yearStart || null,
+                year_end: yearEnd || null
             };
-
-            console.log('Sending request:', requestData); // 添加调试日志
 
             // 发送请求
             fetch('/api/search', {
@@ -703,38 +790,31 @@
                 },
                 body: JSON.stringify(requestData)
             })
-            .then(response => {
-                console.log('Response status:', response.status); // 添加调试日志
-                if (!response.ok) {
-                    return response.json().then(err => {
-                        throw new Error(err.error || `HTTP error! status: ${response.status}`);
-                    });
-                }
-                return response.json();
-            })
+            .then(response => handleFetchError(response))
             .then(data => {
-                console.log('Response data:', data); // 添加调试日志
                 hideLoading();
                 if (data.success) {
-                    // 显示检索策略
-                    currentSearchStrategy = data.search_strategy;
-                    const strategyTextarea = document.getElementById('search-strategy');
-                    strategyTextarea.value = data.search_strategy;
-                    strategyTextarea.readOnly = false;  // 允许编辑
-                    document.getElementById('search-strategy-container').style.display = 'block';
-                    
-                    // 隐藏之前的结果
-                    document.getElementById('results').style.display = 'none';
-                    document.getElementById('search-stats').style.display = 'none';
-                    
-                    showToast('检索策略已生成，您可以进行修改', 'success');
+                    if (mode === 'paragraph') {
+                        // 显示段落分析结果
+                        displayParagraphResults(data);
+                    } else {
+                        // 显示单句模式结果（原有逻辑）
+                        currentSearchStrategy = data.search_strategy;
+                        const strategyTextarea = document.getElementById('search-strategy');
+                        strategyTextarea.value = data.search_strategy;
+                        strategyTextarea.readOnly = false;
+                        document.getElementById('search-strategy-container').style.display = 'block';
+                        document.getElementById('results').style.display = 'none';
+                        document.getElementById('search-stats').style.display = 'none';
+                        showToast('检索策略已生成，您可以进行修改', 'success');
+                    }
                 } else {
-                    showToast(data.error || '生成检索策略失败', 'error');
+                    showToast(data.error || '处理失败', 'error');
                 }
             })
             .catch(error => {
                 hideLoading();
-                showToast('生成检索策略时发生错误: ' + error.message, 'error');
+                showToast('处理过程中发生错误: ' + error.message, 'error');
                 console.error('Error:', error);
             });
         });
@@ -778,6 +858,8 @@
         document.getElementById('execute-search-btn').addEventListener('click', function() {
             const query = document.getElementById('search-input').value.trim();
             const searchStrategy = document.getElementById('search-strategy').value.trim();
+            const yearStart = document.getElementById('year-start').value;
+            const yearEnd = document.getElementById('year-end').value;
 
             if (!query) {
                 showToast('请输入搜索关键词', 'warning');
@@ -806,7 +888,9 @@
                     search_strategy: searchStrategy,  // 使用修改后的检索策略
                     filters: currentFilters,
                     generate_only: false,
-                    execute_search: true
+                    execute_search: true,
+                    year_start: yearStart || null,
+                    year_end: yearEnd || null
                 })
             })
             .then(response => handleFetchError(response))
@@ -1123,6 +1207,110 @@
             
             chart.setOption(option);
             window.addEventListener('resize', () => chart.resize());
+        }
+
+        // 添加模式切换处理
+        document.querySelectorAll('input[name="input-mode"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const paragraphOptions = document.getElementById('paragraph-options');
+                if (this.value === 'paragraph') {
+                    paragraphOptions.style.display = 'block';
+                } else {
+                    paragraphOptions.style.display = 'none';
+                }
+            });
+        });
+
+        // 添加段落结果显示函数
+        function displayParagraphResults(data) {
+            const resultsList = document.getElementById('resultsList');
+            const results = document.getElementById('results');
+            
+            if (!data.sentences || data.sentences.length === 0) {
+                resultsList.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        未找到可分析的句子
+                    </div>`;
+                results.style.display = 'block';
+                return;
+            }
+
+            let html = `
+                <div class="alert alert-info mb-4">
+                    <i class="fas fa-info-circle me-2"></i>
+                    共分析 ${data.sentences.length} 个句子
+                </div>
+            `;
+
+            data.sentences.forEach((sentence, index) => {
+                html += `
+                    <div class="sentence-result">
+                        <div class="sentence-text">
+                            <strong>句子 ${index + 1}:</strong> ${sentence.text}
+                        </div>
+                        <div class="search-strategy mb-3">
+                            <h6 class="mb-2">检索策略：</h6>
+                            <div class="bg-light p-2 rounded">
+                                <code>${sentence.search_strategy || '未生成检索策略'}</code>
+                            </div>
+                        </div>
+                        <div class="papers-list">
+                            <h6 class="mb-3">相关文献：</h6>
+                            ${sentence.papers.map((paper, pIndex) => `
+                                <div class="paper-item">
+                                    <h6 class="paper-title mb-2">
+                                        ${pIndex + 1}. ${paper.title}
+                                    </h6>
+                                    <div class="paper-meta">
+                                        <span class="me-3">
+                                            <i class="fas fa-users me-1"></i>
+                                            ${paper.authors ? paper.authors.join(', ') : '无作者信息'}
+                                        </span>
+                                        <span class="me-3">
+                                            <i class="fas fa-calendar me-1"></i>
+                                            ${paper.pub_year || '无日期信息'}
+                                        </span>
+                                        <span class="me-3">
+                                            <i class="fas fa-book me-1"></i>
+                                            ${paper.journal_info ? paper.journal_info.title : '无期刊信息'}
+                                        </span>
+                                        <span class="me-3">
+                                            <i class="fas fa-chart-line me-1"></i>
+                                            IF: ${paper.journal_info ? paper.journal_info.impact_factor : 'N/A'}
+                                        </span>
+                                        <span class="me-3">
+                                            <i class="fas fa-star me-1"></i>
+                                            JCR: ${paper.journal_info ? paper.journal_info.jcr_quartile : 'N/A'}
+                                        </span>
+                                        <span class="me-3">
+                                            <i class="fas fa-award me-1"></i>
+                                            CAS: ${paper.journal_info ? paper.journal_info.cas_quartile : 'N/A'}
+                                        </span>
+                                        <span class="me-3">
+                                            <i class="fas fa-percentage me-1"></i>
+                                            相关度: ${paper.relevance ? paper.relevance.toFixed(1) : 0}%
+                                        </span>
+                                    </div>
+                                    <div class="mt-2">
+                                        <a href="https://pubmed.ncbi.nlm.nih.gov/${paper.pmid}/" target="_blank" class="btn btn-sm btn-primary">
+                                            <i class="fas fa-external-link-alt me-1"></i>
+                                            查看原文
+                                        </a>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+
+            resultsList.innerHTML = html;
+            results.style.display = 'block';
+            
+            // 隐藏检索策略相关元素
+            document.getElementById('search-strategy-container').style.display = 'none';
+            document.getElementById('search-stats').style.display = 'none';
         }
     </script>
 </body>
