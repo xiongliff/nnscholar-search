@@ -1539,16 +1539,40 @@ def search():
                 # 执行PubMed搜索
                 papers, _, total_count, filtered_count = search_pubmed(search_strategy)
                 
+                # 导出初始检索结果的Excel和Word文件
+                initial_excel_path = export_papers_to_excel(papers, query, 'initial')
+                initial_word_path = export_papers_to_word(papers, query, 'initial')
+                
+                # 为初始检索结果生成分析文件
+                if initial_excel_path:
+                    from analyze_papers import analyze_papers
+                    initial_report_file, initial_text_file = analyze_papers(initial_excel_path)
+                    logger.info(f"初始检索分析完成，生成报告：{initial_report_file}，文献清单：{initial_text_file}")
+                
                 # 应用筛选条件
                 if filters:
                     papers, stats = filter_papers_by_metrics(papers, filters)
                     filtered_count = stats['final']
                 
+                # 导出筛选后的Excel和Word文件
+                filtered_excel_path = export_papers_to_excel(papers, query, 'filtered')
+                filtered_word_path = export_papers_to_word(papers, query, 'filtered')
+                
+                # 为筛选后的结果生成分析文件
+                if filtered_excel_path:
+                    from analyze_papers import analyze_papers
+                    filtered_report_file, filtered_text_file = analyze_papers(filtered_excel_path)
+                    logger.info(f"筛选后分析完成，生成报告：{filtered_report_file}，文献清单：{filtered_text_file}")
+                
                 return jsonify({
                     'success': True,
                     'data': papers,
                     'total_count': total_count,
-                    'filtered_count': filtered_count
+                    'filtered_count': filtered_count,
+                    'initial_excel_file': os.path.basename(initial_excel_path) if initial_excel_path else None,
+                    'initial_word_file': os.path.basename(initial_word_path) if initial_word_path else None,
+                    'filtered_excel_file': os.path.basename(filtered_excel_path) if filtered_excel_path else None,
+                    'filtered_word_file': os.path.basename(filtered_word_path) if filtered_word_path else None
                 })
             
     except Exception as e:
