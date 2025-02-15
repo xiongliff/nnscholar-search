@@ -297,11 +297,45 @@
         }
         
         .analysis-chart {
-            min-height: 300px;
-            background: #f8f9fa;
+            min-height: 400px;
+            width: 100%;
+            background: #ffffff;
             border-radius: 8px;
             padding: 1rem;
             margin-top: 1rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .no-data-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        /* 调整图表卡片样式 */
+        .chart-card {
+            margin-bottom: 2rem;
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .chart-card .card-title {
+            color: #4169E1;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-bottom: 1px solid #eee;
         }
         
         .btn-check:checked + .btn-outline-light {
@@ -389,6 +423,34 @@
         
         .paper-item:last-child {
             border-bottom: none;
+        }
+
+        /* 添加页脚样式 */
+        .footer {
+            background: linear-gradient(135deg, var(--primary-color), #1e3a8a);
+            color: white;
+            padding: 2rem 0;
+            margin-top: 3rem;
+            text-align: center;
+            box-shadow: 0 -2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .footer p {
+            margin: 0;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            opacity: 0.9;
+        }
+        
+        .footer .developer-info {
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            opacity: 0.8;
+        }
+        
+        .footer .wechat {
+            font-weight: bold;
+            color: #fff;
         }
     </style>
 </head>
@@ -659,6 +721,14 @@
         </div>
     </div>
 
+    <!-- 添加页脚 -->
+    <footer class="footer">
+        <div class="container">
+            <p>NNscholar由华中科技大学同济医学院附属同济医院的刘远康博士开发，免费开源。</p>
+            <p class="developer-info">若有部署或其他需求，请联系微信：<span class="wechat">Blackbirdflyinthesky</span></p>
+        </div>
+    </footer>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentSearchStrategy = '';
@@ -776,8 +846,8 @@
                 query: query,
                 mode: mode,
                 papers_per_sentence: papersPerSentence,
-                generate_only: true,
-                execute_search: false,
+                generate_only: mode === 'single',  // 只在单句模式下生成检索策略
+                execute_search: mode === 'paragraph',  // 在段落模式下直接执行检索
                 year_start: yearStart || null,
                 year_end: yearEnd || null
             };
@@ -794,11 +864,8 @@
             .then(data => {
                 hideLoading();
                 if (data.success) {
-                    if (mode === 'paragraph') {
-                        // 显示段落分析结果
-                        displayParagraphResults(data);
-                    } else {
-                        // 显示单句模式结果（原有逻辑）
+                    if (mode === 'single') {
+                        // 单句模式：显示检索策略
                         currentSearchStrategy = data.search_strategy;
                         const strategyTextarea = document.getElementById('search-strategy');
                         strategyTextarea.value = data.search_strategy;
@@ -807,6 +874,10 @@
                         document.getElementById('results').style.display = 'none';
                         document.getElementById('search-stats').style.display = 'none';
                         showToast('检索策略已生成，您可以进行修改', 'success');
+                    } else {
+                        // 段落模式：直接显示结果
+                        document.getElementById('search-strategy-container').style.display = 'none';
+                        displayParagraphResults(data);
                     }
                 } else {
                     showToast(data.error || '处理失败', 'error');
@@ -994,28 +1065,70 @@
         function displayAnalysisResults(data) {
             document.getElementById('analysis-results').style.display = 'block';
             
-            // 渲染热图、词云和趋势图的代码保持不变
-            drawHeatmap(data.heatmap_data);
-            drawWordCloud(data.wordcloud_data);
-            drawTrendChart(data.trend_data);
+            // 等待DOM更新完成后再初始化图表
+            setTimeout(() => {
+                // 重新初始化所有图表容器
+                const containers = ['heatmap-container', 'wordcloud-container', 'trend-container'];
+                containers.forEach(id => {
+                    const container = document.getElementById(id);
+                    const chart = echarts.getInstanceByDom(container);
+                    if (chart) {
+                        chart.dispose();
+                    }
+                });
+
+                // 渲染热图
+                if (data.heatmap_data && data.heatmap_data.length > 0) {
+                    drawHeatmap(data.heatmap_data);
+                } else {
+                    document.getElementById('heatmap-container').innerHTML = 
+                        '<div class="text-center p-4">暂无热点分布数据</div>';
+                }
+
+                // 渲染词云
+                if (data.wordcloud_data && data.wordcloud_data.length > 0) {
+                    drawWordCloud(data.wordcloud_data);
+                } else {
+                    document.getElementById('wordcloud-container').innerHTML = 
+                        '<div class="text-center p-4">暂无词云数据</div>';
+                }
+
+                // 渲染趋势图
+                if (data.trend_data && data.trend_data.topics && data.trend_data.topics.length > 0) {
+                    drawTrendChart(data.trend_data);
+                } else {
+                    document.getElementById('trend-container').innerHTML = 
+                        '<div class="text-center p-4">暂无趋势数据</div>';
+                }
+            }, 100);
             
             // 渲染热点作者表格
             const authorsTable = document.getElementById('hot-authors-table');
-            authorsTable.innerHTML = data.hot_authors.map((author, index) => `
-                <tr>
-                    <td class="author-rank">${index + 1}</td>
-                    <td>${author.name}</td>
-                    <td>${author.total_papers}</td>
-                    <td>${author.first_author}</td>
-                    <td>${author.corresponding_author}</td>
-                    <td class="author-years">${author.years.join(', ')}</td>
-                </tr>
-            `).join('');
+            if (data.hot_authors && data.hot_authors.length > 0) {
+                authorsTable.innerHTML = data.hot_authors.map((author, index) => `
+                    <tr>
+                        <td class="author-rank">${index + 1}</td>
+                        <td>${author.name || 'N/A'}</td>
+                        <td>${author.total_papers || 0}</td>
+                        <td>${author.first_author || 0}</td>
+                        <td>${author.corresponding_author || 0}</td>
+                        <td class="author-years">${author.years ? author.years.join(', ') : 'N/A'}</td>
+                    </tr>
+                `).join('');
+            } else {
+                authorsTable.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center">暂无热点作者数据</td>
+                    </tr>
+                `;
+            }
         }
 
         // 绘制热力图
         function drawHeatmap(data) {
             const container = document.getElementById('heatmap-container');
+            if (!container) return;
+            
             const chart = echarts.init(container);
             
             // 准备数据
@@ -1027,27 +1140,32 @@
                 const row = Math.floor(index / size);
                 const col = index % size;
                 if (row < size && col < size) {
-                    matrix[row][col] = item[1];  // 频率
-                    labels[row][col] = item[0];  // 词语
+                    matrix[row][col] = item[1];  // 使用文章数量作为热度值
+                    labels[row][col] = item[0];  // 使用主题名称作为标签
                 }
             });
             
             // 配置项
             const option = {
+                title: {
+                    text: '研究热点分布',
+                    left: 'center'
+                },
                 tooltip: {
                     position: 'top',
                     formatter: function(params) {
                         const word = labels[params.data[0]][params.data[1]];
-                        const value = matrix[params.data[0]][params.data[1]];
-                        return `${word}: ${value}次`;
+                        const value = params.data[2];
+                        if (word && value) {
+                            return `${word}<br/>文章数量: ${value}`;
+                        }
+                        return '';
                     }
                 },
                 animation: true,
                 grid: {
-                    top: '10%',
-                    left: '10%',
-                    right: '10%',
-                    bottom: '15%'
+                    height: '70%',
+                    top: '15%'
                 },
                 xAxis: {
                     type: 'category',
@@ -1055,7 +1173,8 @@
                     splitArea: {
                         show: true
                     },
-                    axisLabel: {show: false}
+                    axisLabel: {show: false},
+                    splitLine: {show: false}
                 },
                 yAxis: {
                     type: 'category',
@@ -1063,7 +1182,8 @@
                     splitArea: {
                         show: true
                     },
-                    axisLabel: {show: false}
+                    axisLabel: {show: false},
+                    splitLine: {show: false}
                 },
                 visualMap: {
                     min: 0,
@@ -1073,21 +1193,23 @@
                     left: 'center',
                     bottom: '5%',
                     inRange: {
-                        color: ['#e9ecef', '#4169E1']
+                        color: ['#f5f5f5', '#4169E1']
                     }
                 },
                 series: [{
-                    name: '热点分布',
+                    name: '研究热点',
                     type: 'heatmap',
                     data: matrix.map((row, i) => 
                         row.map((val, j) => [i, j, val])
-                    ).flat(),
+                    ).flat().filter(item => item[2] > 0),  // 只显示有值的单元格
                     label: {
                         show: true,
                         formatter: function(params) {
                             return labels[params.data[0]][params.data[1]];
                         },
-                        fontSize: 8
+                        fontSize: 10,
+                        color: '#333',
+                        fontWeight: 'bold'
                     },
                     emphasis: {
                         itemStyle: {
@@ -1098,8 +1220,18 @@
                 }]
             };
             
+            // 设置图表大小
+            chart.resize({
+                height: container.clientHeight || 400
+            });
+            
+            // 渲染图表
             chart.setOption(option);
-            window.addEventListener('resize', () => chart.resize());
+            
+            // 监听容器大小变化
+            window.addEventListener('resize', () => {
+                chart.resize();
+            });
         }
 
         // 绘制词云
@@ -1213,10 +1345,21 @@
         document.querySelectorAll('input[name="input-mode"]').forEach(radio => {
             radio.addEventListener('change', function() {
                 const paragraphOptions = document.getElementById('paragraph-options');
+                const searchStrategyContainer = document.getElementById('search-strategy-container');
+                const results = document.getElementById('results');
+                const searchStats = document.getElementById('search-stats');
+                
                 if (this.value === 'paragraph') {
+                    // 段落模式
                     paragraphOptions.style.display = 'block';
+                    searchStrategyContainer.style.display = 'none';
+                    document.getElementById('search-btn').textContent = '开始分析';
                 } else {
+                    // 单句模式
                     paragraphOptions.style.display = 'none';
+                    results.style.display = 'none';
+                    searchStats.style.display = 'none';
+                    document.getElementById('search-btn').textContent = '生成检索策略';
                 }
             });
         });

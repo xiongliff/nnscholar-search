@@ -1762,6 +1762,54 @@ def get_trend(issn):
             'error': f'获取影响因子趋势出错: {str(e)}'
         }), 500
 
+def expand_keywords(keywords):
+    """
+    扩展关键词，只处理缩写和全称的转换
+    
+    Args:
+        keywords (str): 用逗号分隔的关键词字符串
+        
+    Returns:
+        str: 扩展后的PubMed检索策略
+    """
+    if not keywords:
+        return ""
+        
+    # 分割关键词
+    keyword_list = [k.strip() for k in keywords.split(',')]
+    expanded_terms = []
+    
+    for keyword in keyword_list:
+        if not keyword:
+            continue
+            
+        # 调用DeepSeek API进行扩展
+        prompt = f"""作为PubMed检索专家，请为以下关键词生成检索策略，只考虑缩写和全称的转换，不要添加额外相关概念：
+
+关键词：{keyword}
+
+要求：
+1. 只扩展缩写和全称的对应关系，例如：
+   - "LLM" -> ("LLM"[Title/Abstract] OR "Large Language Model"[Title/Abstract])
+   - "CT" -> ("CT"[Title/Abstract] OR "Computed Tomography"[Title/Abstract])
+2. 不要添加其他相关概念或同义词
+3. 使用Title/Abstract字段
+4. 所有术语都要加双引号
+5. 直接返回检索策略，不要其他解释"""
+
+        try:
+            expanded = call_deepseek_api(prompt)
+            expanded_terms.append(expanded)
+        except Exception as e:
+            logger.warning(f"扩展关键词 {keyword} 时出错: {str(e)}")
+            # 如果扩展失败，使用原始关键词
+            expanded_terms.append(f'"{keyword}"[Title/Abstract]')
+    
+    # 将所有扩展后的词组用 AND 连接
+    if expanded_terms:
+        return " AND ".join(expanded_terms)
+    return ""
+
 @app.route('/api/analyze-journal', methods=['POST'])
 def analyze_journal():
     """期刊分析API端点"""
@@ -1785,8 +1833,18 @@ def analyze_journal():
         # 创建分析器实例
         analyzer = JournalAnalyzer()
         
+        # 构建基本检索策略
+        base_query = f"{journal}[ta] AND ({start_year}[pdat]:{end_year}[pdat])"
+        
+        # 如果有关键词，扩展关键词并添加到检索策略
+        if keywords:
+            expanded_keywords = expand_keywords(keywords)
+            if expanded_keywords:
+                base_query = f"({base_query}) AND ({expanded_keywords})"
+            logger.info(f"最终检索策略: {base_query}")
+        
         # 获取文章数据
-        articles = analyzer.fetch_journal_articles(journal, start_year, end_year)
+        articles = analyzer.fetch_journal_articles(base_query)
         
         if not articles:
             return jsonify({
@@ -1795,24 +1853,6 @@ def analyze_journal():
             }), 404
             
         logger.info(f"获取到 {len(articles)} 篇文章")
-        
-        # 如果提供了关键词，进行过滤
-        if keywords:
-            keywords_list = [k.strip().lower() for k in keywords.split(',')]
-            filtered_articles = []
-            for article in articles:
-                # 检查标题和摘要是否包含任何关键词
-                text = (article.get('title', '') + ' ' + article.get('abstract', '')).lower()
-                if any(keyword in text for keyword in keywords_list):
-                    filtered_articles.append(article)
-            articles = filtered_articles
-            logger.info(f"关键词过滤后剩余 {len(articles)} 篇文章")
-            
-            if not articles:
-                return jsonify({
-                    'success': False,
-                    'error': '未找到包含指定关键词的文章'
-                }), 404
         
         # 分析热点主题
         hot_topics = analyzer.analyze_hot_topics(articles)
@@ -1829,14 +1869,14 @@ def analyze_journal():
         # 准备返回数据
         response_data = {
             'success': True,
-            'heatmap_data': hot_topics,
-            'wordcloud_data': hot_topics,
+            'heatmap_data': [[topic['topic'], topic['article_count']] for topic in hot_topics],  # 修改为二维数组格式
+            'wordcloud_data': [[topic['topic'], topic['article_count']] for topic in hot_topics],  # 修改为二维数组格式
             'trend_data': {
                 'years': list(range(int(start_year), int(end_year) + 1)),
-                'topics': [topic[0] for topic in hot_topics[:5]],  # 取前5个热点主题
-                'frequencies': [topic[1] for topic in hot_topics[:5]]
+                'topics': [topic['topic'] for topic in hot_topics[:5]],
+                'frequencies': [[topic['article_count']] * len(range(int(start_year), int(end_year) + 1)) for topic in hot_topics[:5]]  # 修改为每年的频率
             },
-            'hot_authors': hot_authors,  # 添加热点作者数据
+            'hot_authors': hot_authors,
             'heatmap_url': f'/{heatmap_file}',
             'total_articles': len(articles)
         }
