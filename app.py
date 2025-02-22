@@ -472,7 +472,7 @@ def call_deepseek_api (prompt):
         "model": "deepseek-ai/DeepSeek-V3",
         "messages": [
 
-            {'role': 'user', 'content': EXPERT_PROMPT + "我的检索问题是：" + prompt}
+            {'role': 'user', 'content': EXPERT_PROMPT + "我的问题是：" + prompt}
         ], "stream": False,
         "max_tokens": 2000,
         "stop": ["null"],
