@@ -401,7 +401,7 @@ def filter_papers_by_metrics(papers, filters):
         logger.info(f"4. CAS分区筛选 ({filters.get('cas_quartile', '无限制')}): {len(jcr_filtered)} -> {len(cas_filtered)}")
         
         # 5. 计算综合得分并排序
-        # 相关性权重提高到0.8，影响因子权重降低到0.2
+        # 单句模式下，相关性权重为0.7，影响因子权重为0.3
         for paper in cas_filtered:
             relevance = float(paper.get('relevance', 0))
             journal_info = paper.get('journal_info', {})
@@ -418,8 +418,8 @@ def filter_papers_by_metrics(papers, filters):
             except (ValueError, TypeError):
                 if_score = 0
             
-            # 计算综合得分：相关度占80%，影响因子占20%
-            paper['composite_score'] = (relevance * 0.8) + (if_score * 0.2)
+            # 计算综合得分
+            paper['composite_score'] = (relevance * 0.7) + (if_score * 0.3)
             logger.debug(f"文献 {paper.get('pmid')} 的综合得分: {paper['composite_score']:.1f} (相关性: {relevance:.1f}, IF得分: {if_score:.1f})")
         
         # 按综合得分排序
@@ -1448,28 +1448,53 @@ def index():
 
 @app.route('/api/search', methods=['POST'])
 def search():
-    """搜索API端点"""
+    """处理搜索请求"""
     try:
         data = request.get_json()
-        if not data or 'query' not in data:
+        query = data.get('query', '').strip()
+        mode = data.get('mode', 'single')
+        generate_only = data.get('generate_only', True)
+        execute_search = data.get('execute_search', False)
+        filters = data.get('filters', {})
+        papers_per_sentence = int(data.get('papers_per_sentence', 10))
+        year_start = data.get('year_start')
+        year_end = data.get('year_end')
+        
+        if not query:
             return jsonify({
                 'success': False,
-                'error': '缺少搜索查询参数'
+                'error': '请输入检索内容'
             }), 400
             
-        query = data['query']
-        filters = data.get('filters', {})
-        search_strategy = data.get('search_strategy')
-        generate_only = data.get('generate_only', False)  # 是否只生成检索策略
-        execute_search = data.get('execute_search', False)  # 是否执行实际检索
-        
-        logger.info(f"接收到搜索请求: query={query}, filters={filters}, generate_only={generate_only}, execute_search={execute_search}")
-        
-        if generate_only:
-            # 只生成检索策略
-            try:
-                logger.info("调用DeepSeek生成检索策略...")
-                prompt = """作为PubMed搜索专家，请为以下研究内容生成优化的PubMed检索策略：
+        if mode == 'paragraph':
+            # 段落模式处理
+            sentences = split_paragraph_to_sentences(query)
+            if not sentences:
+                return jsonify({
+                    'success': True,
+                    'sentences': []
+                })
+            
+            # 处理每个句子
+            results = []
+            for sentence in sentences:
+                papers, search_strategy = analyze_sentence(sentence, papers_per_sentence, year_start, year_end)
+                if papers:
+                    results.append({
+                        'text': sentence,
+                        'papers': papers,
+                        'search_strategy': search_strategy
+                    })
+            
+            return jsonify({
+                'success': True,
+                'sentences': results
+            })
+        else:
+            # 单句模式处理
+            if generate_only:
+                # 生成检索策略
+                prompt = f"""作为PubMed搜索专家，请为以下研究内容生成优化的PubMed检索策略：
 
 研究内容：{query}
 
@@ -1492,93 +1517,228 @@ def search():
    - 只使用Title/Abstract字段，不使用MeSH
    - 保持AND连接的逻辑组不超过3组
    - 使用精确匹配，所有术语都要加双引号"""
-
-                search_strategy = call_deepseek_api(prompt.format(query=query))
-                logger.info(f"生成的检索策略: {search_strategy}")
+                search_strategy = call_deepseek_api(prompt)
                 
+                if year_start and year_end:
+                    search_strategy += f" AND (\"{year_start}\"[Date - Publication] : \"{year_end}\"[Date - Publication])"
+                    
                 return jsonify({
                     'success': True,
                     'search_strategy': search_strategy
                 })
-            except Exception as e:
-                logger.error(f"生成检索策略失败: {str(e)}")
-                return jsonify({
-                    'success': False,
-                    'error': '生成检索策略失败'
-                }), 500
-        elif execute_search:
-            # 执行实际检索
-            if not search_strategy:
-                # 如果没有提供检索策略，才使用基本策略
-                search_strategy = f'"{query}"[All Fields]'
-                logger.info(f"未提供检索策略，使用基本搜索策略: {search_strategy}")
-            else:
-                logger.info(f"使用修改后的检索策略: {search_strategy}")
             
-            # 执行PubMed搜索
-            papers, search_strategy, total_count, filtered_count = search_pubmed(search_strategy)
-            
-            if not papers:
+            elif execute_search:
+                # 执行检索
+                search_strategy = data.get('search_strategy', '')
+                if not search_strategy:
+                    return jsonify({
+                        'success': False,
+                        'error': '检索策略不能为空'
+                    }), 400
+                
+                # 执行PubMed搜索
+                papers, _, total_count, filtered_count = search_pubmed(search_strategy)
+                
+                # 导出初始检索结果的Excel和Word文件
+                initial_excel_path = export_papers_to_excel(papers, query, 'initial')
+                initial_word_path = export_papers_to_word(papers, query, 'initial')
+                
+                # 为初始检索结果生成分析文件
+                if initial_excel_path:
+                    from analyze_papers import analyze_papers
+                    initial_report_file, initial_text_file = analyze_papers(initial_excel_path)
+                    logger.info(f"初始检索分析完成，生成报告：{initial_report_file}，文献清单：{initial_text_file}")
+                
+                # 应用筛选条件
+                if filters:
+                    papers, stats = filter_papers_by_metrics(papers, filters)
+                    filtered_count = stats['final']
+                
+                # 导出筛选后的Excel和Word文件
+                filtered_excel_path = export_papers_to_excel(papers, query, 'filtered')
+                filtered_word_path = export_papers_to_word(papers, query, 'filtered')
+                
+                # 为筛选后的结果生成分析文件
+                if filtered_excel_path:
+                    from analyze_papers import analyze_papers
+                    filtered_report_file, filtered_text_file = analyze_papers(filtered_excel_path)
+                    logger.info(f"筛选后分析完成，生成报告：{filtered_report_file}，文献清单：{filtered_text_file}")
+                
                 return jsonify({
                     'success': True,
-                    'data': [],
-                    'search_strategy': search_strategy,
-                    'total_count': 0,
-                    'filtered_count': 0,
-                    'message': '未找到相关文献'
+                    'data': papers,
+                    'total_count': total_count,
+                    'filtered_count': filtered_count,
+                    'initial_excel_file': os.path.basename(initial_excel_path) if initial_excel_path else None,
+                    'initial_word_file': os.path.basename(initial_word_path) if initial_word_path else None,
+                    'filtered_excel_file': os.path.basename(filtered_excel_path) if filtered_excel_path else None,
+                    'filtered_word_file': os.path.basename(filtered_word_path) if filtered_word_path else None
                 })
             
-            # 应用筛选条件
-            filtered_papers = []
-            stats = {}
-            if filters:
-                filtered_papers, stats = filter_papers_by_metrics(papers, filters)
-                logger.info(f"筛选结果: 原始文献数={len(papers)}, 筛选后文献数={len(filtered_papers)}")
-
-            # 导出初始搜索结果
-            initial_excel, initial_word = export_papers(papers, query, '_initial')
-
-            # 如果有筛选结果，也导出筛选后的结果
-            if filtered_papers:
-                filtered_excel, filtered_word = export_papers(filtered_papers, query, '_filtered')
-            else:
-                filtered_excel, filtered_word = None, None
-
-            response = {
-                'success': True,
-                'data': filtered_papers if filtered_papers else papers,  # 如果有筛选结果就显示筛选结果，否则显示原始结果
-                'search_strategy': search_strategy,
-                'total_count': total_count,
-                'filtered_count': len(filtered_papers) if filtered_papers else len(papers),
-                'message': f'找到 {len(filtered_papers) if filtered_papers else len(papers)} 篇相关文献',
-                'stats': stats,  # 添加筛选统计信息
-                'all_papers': papers,  # 添加原始搜索结果
-                'filtered_papers': filtered_papers,  # 添加筛选后的结果
-                'export_files': {
-                    'initial': {
-                        'excel': os.path.basename(initial_excel) if initial_excel else None,
-                        'word': os.path.basename(initial_word) if initial_word else None
-                    },
-                    'filtered': {
-                        'excel': os.path.basename(filtered_excel) if filtered_excel else None,
-                        'word': os.path.basename(filtered_word) if filtered_word else None
-                    }
-                }
-            }
-            
-            return jsonify(response)
-            
+    except Exception as e:
+        logger.error(f"搜索过程中出现错误: {str(e)}")
         return jsonify({
             'success': False,
-            'error': '无效的操作类型'
-        }), 400
+            'error': str(e)
+        }), 500
+
+def split_paragraph_to_sentences(paragraph):
+    """使用 NLTK 将段落分解为句子"""
+    try:
+        # 检查是否包含中文字符
+        has_chinese = any('\u4e00' <= char <= '\u9fff' for char in paragraph)
+        
+        if has_chinese:
+            # 对于中文文本，使用标点符号分句
+            sentences = []
+            current_sentence = ""
+            # 中文分句标点符号
+            end_marks = {'。', '！', '？', '；', '.', '!', '?', ';'}
+            
+            for char in paragraph:
+                current_sentence += char
+                if char in end_marks:
+                    sentence = current_sentence.strip()
+                    if sentence:
+                        sentences.append(sentence)
+                    current_sentence = ""
+            
+            # 处理最后一个可能没有结束标点的句子
+            if current_sentence.strip():
+                sentences.append(current_sentence.strip())
+        else:
+            # 对于英文文本，使用NLTK的分句功能
+            try:
+                sentences = nltk.sent_tokenize(paragraph)
+            except LookupError:
+                # 如果NLTK数据未下载，使用简单的分句规则
+                sentences = [s.strip() for s in re.split('[.!?]+', paragraph) if s.strip()]
+        
+        # 过滤空句子并去重
+        return list(dict.fromkeys(s for s in sentences if s.strip()))
         
     except Exception as e:
-        logger.error(f"搜索处理出错: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({
-            'success': False,
-            'error': f'搜索处理出错: {str(e)}'
-        }), 500
+        logger.error(f"分句过程中出现错误: {str(e)}")
+        # 发生错误时使用最简单的分句方式
+        return [s.strip() for s in re.split('[.。!！?？;；]+', paragraph) if s.strip()]
+
+def analyze_sentence(sentence, papers_per_sentence=10, year_start=None, year_end=None):
+    """分析单个句子并返回相关文献
+    
+    Args:
+        sentence (str): 要分析的句子
+        papers_per_sentence (int): 每个句子返回的文献数量
+        year_start (str): 起始年份
+        year_end (str): 结束年份
+        
+    Returns:
+        tuple: (papers, search_strategy) 相关文献列表和检索策略
+    """
+    try:
+        # 首先生成检索策略
+        prompt = f"""作为PubMed搜索专家，请为以下研究内容生成优化的PubMed检索策略：
+
+研究内容：{sentence}
+
+要求：
+1. 提取2-3个核心概念，每个概念扩展：
+   - 首选缩写（如有）
+   - 全称术语
+   - 相近术语和同义词
+   - 仅返回检索策略，不要其他解释
+
+2. 结构要求：
+   (
+     ("缩写"[Title/Abstract] OR "全称术语"[Title/Abstract] OR "同义词"[Title/Abstract]) 
+     AND 
+     ("缩写"[Title/Abstract] OR "全称术语"[Title/Abstract] OR "同义词"[Title/Abstract])
+   )
+
+3. 强制规则：
+   - 每个概念最多3个术语（缩写+全称+同义词）
+   - 只使用Title/Abstract字段，不使用MeSH
+   - 保持AND连接的逻辑组不超过3组
+   - 使用精确匹配，所有术语都要加双引号"""
+
+        search_strategy = call_deepseek_api(prompt)
+        logger.info(f"为句子生成检索策略: {search_strategy}")
+
+        # 如果提供了年份范围，添加年份限制条件
+        if year_start and year_end:
+            search_strategy += f" AND (\"{year_start}\"[Date - Publication] : \"{year_end}\"[Date - Publication])"
+            logger.info(f"添加年份限制条件: {search_strategy}")
+
+        # 使用生成的检索策略搜索文献
+        papers, _, _, _ = search_pubmed(search_strategy)
+        if not papers:
+            return [], search_strategy
+        
+        # 为每篇文献获取期刊指标信息
+        for paper in papers:
+            # 确保journal_info存在
+            if 'journal_info' not in paper:
+                issn = paper.get('journal_issn')
+                if issn:
+                    metrics = get_journal_metrics(issn)
+                    if metrics:
+                        paper['journal_info'] = metrics
+                    else:
+                        paper['journal_info'] = {
+                            'title': paper.get('journal', {}).get('title', 'N/A'),
+                            'impact_factor': 'N/A',
+                            'jcr_quartile': 'N/A',
+                            'cas_quartile': 'N/A'
+                        }
+        
+        # 计算每篇文献的相关度和综合得分
+        for paper in papers:
+            # 计算相关度得分 (0-100)
+            relevance_score = calculate_relevance_improved(sentence, paper)
+            paper['relevance'] = relevance_score
+            
+            # 计算影响因子得分 (0-100)
+            impact_factor = paper.get('journal_info', {}).get('impact_factor', 'N/A')
+            if impact_factor != 'N/A':
+                try:
+                    if isinstance(impact_factor, str):
+                        impact_factor = float(impact_factor.replace(',', ''))
+                    # 将影响因子归一化到0-100的范围（假设最高影响因子为50）
+                    if_score = min(100, (float(impact_factor) / 50) * 100)
+                except (ValueError, TypeError):
+                    if_score = 0
+            else:
+                if_score = 0
+            
+            # 在段落模式下，影响因子权重为0.7，相关度权重为0.3
+            paper['composite_score'] = (if_score * 0.7) + (relevance_score * 0.3)
+            logger.debug(f"文献 {paper.get('pmid')} 的综合得分: {paper['composite_score']:.1f} (相关度得分: {relevance_score:.1f}, 影响因子得分: {if_score:.1f})")
+        
+        # 按综合得分排序
+        papers.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
+        
+        # 返回指定数量的文献和检索策略
+        return papers[:papers_per_sentence], search_strategy
+        
+    except Exception as e:
+        logger.error(f"分析句子时出现错误: {str(e)}")
+        return [], None
+
+def calculate_similarity(text1, text2):
+    """计算两段文本的相似度（简单实现）"""
+    try:
+        # 将文本转换为小写并分词
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        # 计算 Jaccard 相似度
+        intersection = len(words1.intersection(words2))
+        union = len(words1.union(words2))
+        
+        return intersection / union if union > 0 else 0
+        
+    except Exception as e:
+        logger.error(f"计算相似度时出现错误: {str(e)}")
+        return 0
 
 @app.route('/api/metrics/<issn>')
 def get_metrics(issn):
@@ -1626,6 +1786,54 @@ def get_trend(issn):
             'error': f'获取影响因子趋势出错: {str(e)}'
         }), 500
 
+def expand_keywords(keywords):
+    """
+    扩展关键词，只处理缩写和全称的转换
+    
+    Args:
+        keywords (str): 用逗号分隔的关键词字符串
+        
+    Returns:
+        str: 扩展后的PubMed检索策略
+    """
+    if not keywords:
+        return ""
+        
+    # 分割关键词
+    keyword_list = [k.strip() for k in keywords.split(',')]
+    expanded_terms = []
+    
+    for keyword in keyword_list:
+        if not keyword:
+            continue
+            
+        # 调用DeepSeek API进行扩展
+        prompt = f"""作为PubMed检索专家，请为以下关键词生成检索策略，只考虑缩写和全称的转换，不要添加额外相关概念：
+
+关键词：{keyword}
+
+要求：
+1. 只扩展缩写和全称的对应关系，例如：
+   - "LLM" -> ("LLM"[Title/Abstract] OR "Large Language Model"[Title/Abstract])
+   - "CT" -> ("CT"[Title/Abstract] OR "Computed Tomography"[Title/Abstract])
+2. 不要添加其他相关概念或同义词
+3. 使用Title/Abstract字段
+4. 所有术语都要加双引号
+5. 直接返回检索策略，不要其他解释"""
+
+        try:
+            expanded = call_deepseek_api(prompt)
+            expanded_terms.append(expanded)
+        except Exception as e:
+            logger.warning(f"扩展关键词 {keyword} 时出错: {str(e)}")
+            # 如果扩展失败，使用原始关键词
+            expanded_terms.append(f'"{keyword}"[Title/Abstract]')
+    
+    # 将所有扩展后的词组用 AND 连接
+    if expanded_terms:
+        return " AND ".join(expanded_terms)
+    return ""
+
 @app.route('/api/analyze-journal', methods=['POST'])
 def analyze_journal():
     """期刊分析API端点"""
@@ -1649,8 +1857,18 @@ def analyze_journal():
         # 创建分析器实例
         analyzer = JournalAnalyzer()
         
+        # 构建基本检索策略
+        base_query = f"{journal}[ta] AND ({start_year}[pdat]:{end_year}[pdat])"
+        
+        # 如果有关键词，扩展关键词并添加到检索策略
+        if keywords:
+            expanded_keywords = expand_keywords(keywords)
+            if expanded_keywords:
+                base_query = f"({base_query}) AND ({expanded_keywords})"
+            logger.info(f"最终检索策略: {base_query}")
+        
         # 获取文章数据
-        articles = analyzer.fetch_journal_articles(journal, start_year, end_year)
+        articles = analyzer.fetch_journal_articles(base_query)
         
         if not articles:
             return jsonify({
@@ -1659,24 +1877,6 @@ def analyze_journal():
             }), 404
             
         logger.info(f"获取到 {len(articles)} 篇文章")
-        
-        # 如果提供了关键词，进行过滤
-        if keywords:
-            keywords_list = [k.strip().lower() for k in keywords.split(',')]
-            filtered_articles = []
-            for article in articles:
-                # 检查标题和摘要是否包含任何关键词
-                text = (article.get('title', '') + ' ' + article.get('abstract', '')).lower()
-                if any(keyword in text for keyword in keywords_list):
-                    filtered_articles.append(article)
-            articles = filtered_articles
-            logger.info(f"关键词过滤后剩余 {len(articles)} 篇文章")
-            
-            if not articles:
-                return jsonify({
-                    'success': False,
-                    'error': '未找到包含指定关键词的文章'
-                }), 404
         
         # 分析热点主题
         hot_topics = analyzer.analyze_hot_topics(articles)
@@ -1693,14 +1893,14 @@ def analyze_journal():
         # 准备返回数据
         response_data = {
             'success': True,
-            'heatmap_data': hot_topics,
-            'wordcloud_data': hot_topics,
+            'heatmap_data': [[topic['topic'], topic['article_count']] for topic in hot_topics],  # 修改为二维数组格式
+            'wordcloud_data': [[topic['topic'], topic['article_count']] for topic in hot_topics],  # 修改为二维数组格式
             'trend_data': {
                 'years': list(range(int(start_year), int(end_year) + 1)),
-                'topics': [topic[0] for topic in hot_topics[:5]],  # 取前5个热点主题
-                'frequencies': [topic[1] for topic in hot_topics[:5]]
+                'topics': [topic['topic'] for topic in hot_topics[:5]],
+                'frequencies': [[topic['article_count']] * len(range(int(start_year), int(end_year) + 1)) for topic in hot_topics[:5]]  # 修改为每年的频率
             },
-            'hot_authors': hot_authors,  # 添加热点作者数据
+            'hot_authors': hot_authors,
             'heatmap_url': f'/{heatmap_file}',
             'total_articles': len(articles)
         }
